@@ -77,6 +77,8 @@ elif pretrained_generator == 'pretrained':
                         pretrained=True, useGPU=True)
     generator = model.getNetG().to(device)
 
+generator = torch.nn.DataParallel(generator)
+
 # 디텍터
 detector = get_model(det_arch)
 state_dict = torch.load(det_ckpt, map_location='cpu')
@@ -84,6 +86,7 @@ detector.fc.load_state_dict(state_dict)
 print ("Detector loaded..")
 detector.eval()
 detector.cuda()
+detector = torch.nn.DataParallel(detector)
 
 # 옵티마이저
 optimizer = optim.Adam(generator.parameters(), lr=learing_rate, betas=betas)
