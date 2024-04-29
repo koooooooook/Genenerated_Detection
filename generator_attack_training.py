@@ -13,7 +13,7 @@ import pytorch_ssim
 import lpips
 
 from models_progan.progressive_gan import ProgressiveGAN
-from models_univdet import get_model
+
 
 # yaml 파일로 뺄 것
 batch_size = 10
@@ -25,18 +25,20 @@ num_epochs = 1000
 learing_rate = 0.0002
 betas = (0.5, 0.999)
 data_root = './dataset'
-lambda_cri = 0
-lambda_det = 0
+lambda_cri = 0.9
+lambda_det = 0.1
 pretrained_generator = 'pretrained' # pretrained, scratch
 train_with = 'gen'
-target_image_path = f'{train_with}_cat_0000.png'
+target_image_path = f'{train_with}_face_0000.png'
 # wandb
 wandb_project = 'GenDet'
-wandb_name = f'progan_noloss_{pretrained_generator}_{target_image_path}'
+# wandb_name = f'progan_noloss_{pretrained_generator}_{target_image_path}'
+wandb_name = f'progan_detcri_0901_CNNDetection_{target_image_path}'
 log_freq=10
 # detector
 det_arch='CLIP:ViT-L/14' # 'Imagenet:resnet18','Imagenet:resnet34','Imagenet:resnet50','Imagenet:resnet101','Imagenet:resnet152','Imagenet:vgg11','Imagenet:vgg19','Imagenet:swin-b','Imagenet:swin-s','Imagenet:swin-t','Imagenet:vit_b_16','Imagenet:vit_b_32','Imagenet:vit_l_16','Imagenet:vit_l_32','CLIP:RN50','CLIP:RN101','CLIP:RN50x4','CLIP:RN50x16','CLIP:RN50x64','CLIP:ViT-B/32','CLIP:ViT-B/16','CLIP:ViT-L/14','CLIP:ViT-L/14@336px',
-det_ckpt='experiments/detector/fc_weights.pth'
+det_model='CNNDetection' # 'UnivFD', 'CNNDetection' 
+crop_images = None # 224?
 
 # LOSS 구현들, 밖으로 뺼 것
 import torch.nn.functional as F
@@ -80,13 +82,28 @@ elif pretrained_generator == 'pretrained':
 generator = torch.nn.DataParallel(generator)
 
 # 디텍터
-detector = get_model(det_arch)
-state_dict = torch.load(det_ckpt, map_location='cpu')
-detector.fc.load_state_dict(state_dict)
-print ("Detector loaded..")
-detector.eval()
-detector.cuda()
-detector = torch.nn.DataParallel(detector)
+if det_model == 'UnivFD':
+    from models_univdet import get_model
+    det_ckpt = 'experiments/detector/fc_weights.pth'
+    
+    detector = get_model(det_arch)
+    state_dict = torch.load(det_ckpt, map_location='cpu')
+    detector.fc.load_state_dict(state_dict)
+    print ("Detector loaded..")
+    detector.eval()
+    detector.cuda()
+    detector = torch.nn.DataParallel(detector)
+    
+elif det_model == 'CNNDetection':
+    from models_CNNDetection.demo_output import get_model
+    det_ckpt = 'experiments/detector/blur_jpg_prob0.5.pth'
+
+    detector = get_model()
+    state_dict = torch.load(det_ckpt, map_location='cpu')
+    detector.load_state_dict(state_dict['model'])
+    detector.cuda()
+    detector.eval()
+    detector = torch.nn.DataParallel(detector)
 
 # 옵티마이저
 optimizer = optim.Adam(generator.parameters(), lr=learing_rate, betas=betas)
@@ -155,10 +172,32 @@ for epoch in tqdm(range(num_epochs)):
         
         # Detector (input 224 224)
         loss_det = 0
-        crop_transform = transforms.CenterCrop((224, 224))
-        outputs_cropped = crop_transform(outputs)
-        det_output = detector(outputs_cropped)
+        if det_model == 'UnivFD':
+            crop_transform = transforms.CenterCrop((224, 224))
+            outputs_cropped = crop_transform(outputs)
+            det_output = detector(outputs_cropped)
+        elif det_model == 'CNNDetection':
+            trans_init=[]
+            if(crop_images is not None):
+                trans_init = [transforms.CenterCrop(crop_images),]
+                print('Cropping to [%i]'%crop_images)
+            else:
+                # print('Not cropping')
+                trans = transforms.Compose(trans_init + [
+                    # transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+                ])
+            
+            # img = trans(Image.open(img_path).convert('RGB'))
+            img = trans(outputs) # 이거 빼야하나 고민
+            # img = trans(targets)
+            
+            # img = img.unsqueeze(0)
+            outputs = img.cuda()
+            det_output = detector(outputs)
+            # import pdb; pdb.set_trace()
         loss_det = torch.mean(det_output.sigmoid().flatten())
+        # print(loss_det)
         
         # backward
         loss = loss_cri * lambda_cri + loss_det * lambda_det
