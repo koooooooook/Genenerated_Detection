@@ -16,23 +16,31 @@ from models_progan.progressive_gan import ProgressiveGAN
 from models_univdet import get_model
 
 # yaml 파일로 뺄 것
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument("--train_with", type=str, help="Training image: class_id", default='real')
+parser.add_argument("--train_id", type=str, help="Training image: class_id", default='cat_0005')
+args = parser.parse_args()
+train_with = args.train_with
+train_id = args.train_id
+
 batch_size = 10
 shuffle_batch = False
 traindata_size = 100
 device = 'cuda'
 criterion = 'MSE'
-num_epochs = 1000
+num_epochs = 500
 learing_rate = 0.0002
 betas = (0.5, 0.999)
 data_root = './dataset'
-lambda_cri = 0
-lambda_det = 0
-pretrained_generator = 'pretrained' # pretrained, scratch
-train_with = 'gen'
-target_image_path = f'{train_with}_cat_0000.png'
+detector_attack = False
+pretrained_generator = 'scratch' # pretrained, scratch
+# train_with = 'gen'
+# train_id = 'cat_0005'
+target_image_path = f'{train_with}_{train_id}.png'
 # wandb
 wandb_project = 'GenDet'
-wandb_name = f'progan_noloss_{pretrained_generator}_{target_image_path}'
+wandb_name = f'progan_{pretrained_generator}_{train_id}'
 log_freq=10
 # detector
 det_arch='CLIP:ViT-L/14' # 'Imagenet:resnet18','Imagenet:resnet34','Imagenet:resnet50','Imagenet:resnet101','Imagenet:resnet152','Imagenet:vgg11','Imagenet:vgg19','Imagenet:swin-b','Imagenet:swin-s','Imagenet:swin-t','Imagenet:vit_b_16','Imagenet:vit_b_32','Imagenet:vit_l_16','Imagenet:vit_l_32','CLIP:RN50','CLIP:RN101','CLIP:RN50x4','CLIP:RN50x16','CLIP:RN50x64','CLIP:ViT-B/32','CLIP:ViT-B/16','CLIP:ViT-L/14','CLIP:ViT-L/14@336px',
@@ -67,23 +75,23 @@ def lpips_loss(input, target):
 device = torch.device(device)
 
 # 모델
-if pretrained_generator == 'scratch':
-    model = ProgressiveGAN()
-    generator = model.getNetG().to(device)
-elif pretrained_generator == 'pretrained':
-    # this model outputs 256 x 256 pixel images
-    model = torch.hub.load('facebookresearch/pytorch_GAN_zoo:hub',
-                        'PGAN', model_name='celebAHQ-256',
-                        pretrained=True, useGPU=True)
+# this model outputs 256 x 256 pixel images
+model = torch.hub.load('facebookresearch/pytorch_GAN_zoo:hub',
+                    'PGAN', model_name='celebAHQ-256',
+                    pretrained=True, useGPU=True)
+if pretrained_generator == 'pretrained':
+    generator = model.getOriginalG().to(device)
+elif pretrained_generator == 'scratch':
     generator = model.getNetG().to(device)
 
 # 디텍터
-detector = get_model(det_arch)
-state_dict = torch.load(det_ckpt, map_location='cpu')
-detector.fc.load_state_dict(state_dict)
-print ("Detector loaded..")
-detector.eval()
-detector.cuda()
+if detector_attack:
+    detector = get_model(det_arch)
+    state_dict = torch.load(det_ckpt, map_location='cpu')
+    detector.fc.load_state_dict(state_dict)
+    print ("Detector loaded..")
+    detector.eval()
+    detector.cuda()
 
 # 옵티마이저
 optimizer = optim.Adam(generator.parameters(), lr=learing_rate, betas=betas)
@@ -129,7 +137,13 @@ elif criterion == 'LPIPS':
     criterion = lpips_loss
 else:
     raise ValueError("Invalid loss function")
-
+if detector_attack:
+    lambda_cri = 0.9
+    lambda_det = 0.1
+else:
+    lambda_cri = 1
+    lambda_det = 0
+    
 # wandb 초기화
 wandb.init(project=wandb_project, name=wandb_name)
 # wandb에 모델과 optimizer 등록
@@ -152,12 +166,14 @@ for epoch in tqdm(range(num_epochs)):
         
         # Detector (input 224 224)
         loss_det = 0
-        crop_transform = transforms.CenterCrop((224, 224))
-        outputs_cropped = crop_transform(outputs)
-        det_output = detector(outputs_cropped)
-        loss_det = torch.mean(det_output.sigmoid().flatten())
+        if detector_attack:
+            crop_transform = transforms.CenterCrop((224, 224))
+            outputs_cropped = crop_transform(outputs)
+            det_output = detector(outputs_cropped)
+            loss_det = torch.mean(det_output.sigmoid().flatten())
         
         # backward
+        # MODIFICATION: loss_cri * lambda_cri + loss_det * lambda_det
         loss = loss_cri * lambda_cri + loss_det * lambda_det
         loss.backward()
 
@@ -171,11 +187,13 @@ for epoch in tqdm(range(num_epochs)):
         losses_for_wandb['PSNR']   = psnr_loss(outputs, targets).item()
         losses_for_wandb['SSIM+']  = ssim_loss_for_print(outputs, targets).item()
         losses_for_wandb['LPIPS']  = lpips_loss(outputs, targets).mean().item()
-        losses_for_wandb['DET']    = loss_det.item()
+        if detector_attack:
+            losses_for_wandb['DET']    = loss_det.item()
         
     # wandb에 로그 기록
-    wandb.log({"Loss": loss.item()})
-    wandb.log(losses_for_wandb)
+    wandb.log({"Epoch":epoch, "Loss": loss.item()})
+    for loss_ in losses_for_wandb:
+        wandb.log({"Epoch":epoch, loss_: losses_for_wandb[loss_]})
     if (epoch) % 10 == 0:
         wandb.log({"Generated Images": wandb.Image(outputs[0])})
     if (epoch) % 200 == 0:
