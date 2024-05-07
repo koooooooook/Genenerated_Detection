@@ -18,9 +18,9 @@ do
     index=$(( (index + 1) % 4 ))  # GPU ID 배열 길이에 맞게 인덱스를 순환
 
     # GPU 수만큼 실행 후 기다리기
-    if [[ $((index % 4)) -eq 0 ]]; then
+    if [[ $((index % 4)) -eq    0 ]]; then
         wait
-    fi
-done
+        fi
+done                                    
 
-wait  # 마지막 배치의 모든 프로세스가 끝나기를 기다림
+wait  # 마지막 배치의 모든 프로세스가 끝나기를 기다림                                                                                                                                              
