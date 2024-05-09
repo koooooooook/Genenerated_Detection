@@ -1,2 +1,5 @@
 experiments/
+*.pt
 wandb/
+dataset/
+backup/

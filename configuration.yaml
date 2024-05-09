@@ -1,0 +1,37 @@
+exp:
+  detector_attack: False
+  lambda_cri: 1
+  lambda_det: 0
+
+wandb:
+  wandb_project: "batch1_jw"
+  log_freq: 10
+
+generator:
+  pretrained_generator: "scratch"
+  gen_arch: "progan"
+# progan, 
+
+detector:
+  det_arch: "CLIP:ViT-L/14"
+  det_ckpt: "experiments/detector/fc_weights.pth"
+# 'Imagenet:resnet18','Imagenet:resnet34','Imagenet:resnet50','Imagenet:resnet101','Imagenet:resnet152','Imagenet:vgg11','Imagenet:vgg19','Imagenet:swin-b','Imagenet:swin-s','Imagenet:swin-t','Imagenet:vit_b_16','Imagenet:vit_b_32','Imagenet:vit_l_16','Imagenet:vit_l_32','CLIP:RN50','CLIP:RN101','CLIP:RN50x4','CLIP:RN50x16','CLIP:RN50x64','CLIP:ViT-B/32','CLIP:ViT-B/16','CLIP:ViT-L/14','CLIP:ViT-L/14@336px',
+
+hyperparameters:
+  criterion: "MSE"
+  num_epochs: 500
+  batch_size: 1
+  # shuffle_batch = False
+  # traindata_size = 100
+
+optimizer:
+  learning_rate: 0.0002
+  learning_rate_noise: 0.0002
+  betas: [0.9, 0.999]
+  betas_noise: [0.9, 0.999]
+
+scheduler:
+  T_max: 100
+  T_max_noise: 100
+  eta_min: 0.0001
+  eta_min_noise: 0.0001
