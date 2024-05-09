@@ -15,12 +15,12 @@ import lpips
 from models_progan.progressive_gan import ProgressiveGAN
 
 # yaml 파일로 뺄 것
-# batch_size = 10
-# shuffle_batch = False
-# traindata_size = 100
+batch_size = 10
+shuffle_batch = False
+traindata_size = 100
 device = 'cuda'
 criterion = 'MSE'
-num_epochs = 1000
+num_epochs = 500
 learing_rate = 0.0002
 betas = (0.5, 0.999)
 data_root = './dataset/sy_test/'
@@ -30,7 +30,7 @@ pretrained_generator = 'pretrained' # pretrained, scratch
 train_with = 'gen'
 # target_image_path = f'{train_with}_train_0000.png'
 # wandb
-wandb_project = 'batch1'
+wandb_project = 'source'
 # wandb_name = f'progan_noloss_{pretrained_generator}_{target_image_path}'
 # wandb_name = f'progan_detach_0109_UnivFD_{target_image_path}'
 log_freq=10
@@ -88,38 +88,14 @@ elif pretrained_generator == 'pretrained':
 
 generator = torch.nn.DataParallel(generator)
 
-# # 디텍터
-# if det_model == 'UnivFD':
-#     from models_univdet import get_model
-#     det_ckpt = 'experiments/detector/fc_weights.pth'
-    
-#     detector = get_model(det_arch)
-#     state_dict = torch.load(det_ckpt, map_location='cpu')
-#     detector.fc.load_state_dict(state_dict)
-#     print ("Detector loaded..")
-#     detector.eval()
-#     detector.cuda()
-#     detector = torch.nn.DataParallel(detector)
-    
-# elif det_model == 'CNNDetection':
-#     from models_CNNDetection.demo_output import get_model
-#     det_ckpt = 'experiments/detector/blur_jpg_prob0.5.pth'
-
-#     detector = get_model()
-#     state_dict = torch.load(det_ckpt, map_location='cpu')
-#     detector.load_state_dict(state_dict['model'])
-#     detector.cuda()
-#     detector.eval()
-#     detector = torch.nn.DataParallel(detector)
-
 # 옵티마이저
-optimizer_gen = optim.Adam(generator.parameters(), lr=learing_rate, betas=betas)
+optimizer = optim.Adam(generator.parameters(), lr=learing_rate, betas=betas)
 # optimizer = model.getOptimizerG()
 
 # 데이터로더
-noises, _ = model.buildNoiseData(1)
-noises.requires_grad = True
-optimizer_z = optim.Adam([noises], lr=learing_rate, betas=betas)
+noises, _ = model.buildNoiseData(traindata_size)
+# noises = torch.randn(100, 512)
+dataloader = torch.utils.data.DataLoader(noises, batch_size=batch_size, shuffle=shuffle_batch)
 
 # geneated image 타겟
 root = './dataset/sy_test_resized/'
@@ -136,19 +112,17 @@ elif target_image_path.endswith('.png') or target_image_path.endswith('.jpeg'):
     generated_image = generated_image.transpose(2, 0, 1)
 generated_image = (generated_image - np.min(generated_image)) / (np.max(generated_image) - np.min(generated_image))
 generated_image = (generated_image * 2) - 1
-# generated_images = []
-# for _ in range(batch_size):
-#     if len(generated_image.shape) == 4:
-#         generated_images.append(torch.Tensor(generated_image))
-#     elif len(generated_image.shape) == 3:
-#         generated_images.append(torch.Tensor(generated_image[np.newaxis, :]))
-#     elif len(generated_image.shape) == 2:
-#         generated_images.append(torch.Tensor(generated_image[np.newaxis, np.newaxis, :]))
-#     else:
-#         raise ValueError("Invalid image shape")
-# targets = torch.cat(generated_images, dim=0)
-targets = torch.from_numpy(generated_image).unsqueeze(0)
-targets = targets.to(torch.float32)
+generated_images = []
+for _ in range(batch_size):
+    if len(generated_image.shape) == 4:
+        generated_images.append(torch.Tensor(generated_image))
+    elif len(generated_image.shape) == 3:
+        generated_images.append(torch.Tensor(generated_image[np.newaxis, :]))
+    elif len(generated_image.shape) == 2:
+        generated_images.append(torch.Tensor(generated_image[np.newaxis, np.newaxis, :]))
+    else:
+        raise ValueError("Invalid image shape")
+targets = torch.cat(generated_images, dim=0)
 print("target shape : ", targets.shape)
 
 # criterion
@@ -172,81 +146,32 @@ wandb.watch(generator, criterion, log='all', log_freq=log_freq)
 
 generator.train()
 for epoch in tqdm(range(num_epochs)):
-    # for inputs in dataloader:
-    # inputs = inputs.to(device)
-    # import pdb; pdb.set_trace()
-    noises = noises.to(device)
-    targets = targets.to(device)
+    for inputs in dataloader:
+        inputs = inputs.to(device)
+        targets = targets.to(device)
 
-    optimizer_gen.zero_grad()
-    optimizer_z.zero_grad()
-    
-    # forward pass
-    outputs = generator(noises)
+        optimizer.zero_grad()
 
-    # loss for update
-    loss_cri = 0
-    loss_cri = criterion(outputs, targets)
-    
-    # # Detector (input 224 224)
-    # loss_det = 0
-    # if det_model == 'UnivFD':
-    #     crop_transform = transforms.CenterCrop((224, 224))
-    #     outputs_cropped = crop_transform(outputs)
-    #     det_output = detector(outputs_cropped)
-    # elif det_model == 'CNNDetection':
-    #     trans_init=[]
-    #     if(crop_images is not None):
-    #         trans_init = [transforms.CenterCrop(crop_images),]
-    #         print('Cropping to [%i]'%crop_images)
-    #     else:
-    #         # print('Not cropping')
-    #         trans = transforms.Compose(trans_init + [
-    #             # transforms.ToTensor(),
-    #             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-    #         ])
-        
-    #     # img = trans(Image.open(img_path).convert('RGB'))
-    #     img = trans(outputs) # 이거 빼야하나 고민
-    #     # img = trans(targets)
-        
-    #     # img = img.unsqueeze(0)
-    #     outputs = img.cuda()
-    #     det_output = detector(outputs)
-    #     # import pdb; pdb.set_trace()
-    # loss_det = torch.mean(det_output.sigmoid().flatten())
-    # # print(loss_det)
-    # new_loss_det = loss_det.detach()
-    # BCEcri = torch.nn.BCELoss()
-    # target = torch.zeros_like(new_loss_det)
-    # new_cri = BCEcri(new_loss_det, target)
-    
-    # backward
-    # loss = loss_cri * lambda_cri + new_loss_det * lambda_det
-    loss = loss_cri * lambda_cri
-    loss.backward()
+        # forward pass
+        outputs = generator(inputs)
 
-    # update
-    optimizer_gen.step()
-    optimizer_z.step()
-    
-    # loss for analysis
-    losses_for_wandb = {}        
-    losses_for_wandb['MSE']    = mse_loss(outputs, targets).item()
-    losses_for_wandb['L1']     = l1_loss(outputs, targets).item()
-    losses_for_wandb['PSNR']   = psnr_loss(outputs, targets).item()
-    losses_for_wandb['SSIM+']  = ssim_loss_for_print(outputs, targets).item()
-    losses_for_wandb['LPIPS']  = lpips_loss(outputs, targets).mean().item()
-    # losses_for_wandb['DET']    = loss_det.item()
+        # loss for update
+        loss_cri = 0
+        loss_cri = criterion(outputs, targets)
         
-    # # wandb에 로그 기록
-    # wandb.log({"Loss": loss.item()})
-    # wandb.log(losses_for_wandb)
-    # if (epoch) % 10 == 0:
-    #     wandb.log({"Generated Images": wandb.Image(outputs[0])})
-    # if (epoch) % 200 == 0:
-    #     torch.save(generator.state_dict(), f"experiments/ProGan/progan_{img_name}_{epoch+1}.pt")
+        loss = loss_cri * lambda_cri
+        loss.backward()
+
+        # update
+        optimizer.step()
         
+        # loss for analysis
+        losses_for_wandb = {}        
+        losses_for_wandb['MSE']    = mse_loss(outputs, targets).item()
+        losses_for_wandb['L1']     = l1_loss(outputs, targets).item()
+        losses_for_wandb['PSNR']   = psnr_loss(outputs, targets).item()
+        losses_for_wandb['SSIM+']  = ssim_loss_for_print(outputs, targets).item()
+        losses_for_wandb['LPIPS']  = lpips_loss(outputs, targets).mean().item()     
         
     # wandb에 로그 기록
     wandb.log({"Epoch":epoch, "Loss": loss.item()})

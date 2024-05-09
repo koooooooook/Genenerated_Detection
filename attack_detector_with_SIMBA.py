@@ -5,7 +5,7 @@ import torchvision.transforms as transforms
 
 device = 'cuda'
 data_root = './dataset/sy_test_resized/'
-source = 'whichfaceisreal'
+source = 'stylegan2'
 ox = '1_fake'
 img_dir = os.path.join(data_root, source, ox)
 img_list = os.listdir(img_dir)
